@@ -11,13 +11,14 @@ const config = {
     mode: 'development',
     devtool: 'inline-source-map',
     entry: {
-        'content/content': './src/content/content.js',
-        'background/worker': './src/background/worker.js'
+        'background/worker': './src/background/worker.js',
+        'db/database': './src/db/database.js',
+        'popup/debug': './src/popup/debug.js'
     },
     output: {
         path: path.resolve(__dirname, 'build'),
         filename: '[name].js',
-        pathinfo: true
+        pathinfo: true,
     },
     plugins: [
         new HtmlWebpackPlugin({
@@ -29,7 +30,15 @@ const config = {
             patterns: [
                 {
                     from: "public",
-                    to: "." // Copies to build folder
+                    to: "."
+                },
+                {
+                    from: "./src/content/page_data_collector.js",
+                    to: "./content/page_data_collector.js"
+                },
+                {
+                    from: "./src/content/content.js",
+                    to: "./content/content.js"
                 },
             ],
         })
