@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "UMAP visualisation",
+  "description": "UMAP history visualisation extension",
+  "version": "1.0",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background/worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [ "<all_urls>" ],
+      "js": [ "content/content.js" ]
+    }
+  ],
+  "minimum_chrome_version": "92",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'"
+  }
+}
+
