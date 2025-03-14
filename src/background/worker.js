@@ -20,8 +20,6 @@ class EmbeddingsGenerator {
       if (!this.pipe) {
         await this.initializeTransformers();
 
-        console.log(env);
-
         this.pipe = await pipeline('feature-extraction', 'all-MiniLM-L6-v2', {
           cache: false,
           useCache: false
@@ -64,8 +62,13 @@ class BackgroundWorker {
 
   async handlePageVisited(pageData) {
     const embeddings = await BackgroundWorker.embeddingsGenerator.generateEmbeddings(pageData.markdown);
-    pageData.embeddings = embeddings;
-    await this.db.savePage(pageData);
+    const db_data = {
+      url: pageData.url,
+      title: pageData.title,
+      timestamp: pageData.timestamp,
+      embeddings: embeddings
+    };
+    await this.db.savePage(db_data);
   }
 }
 

@@ -92,8 +92,7 @@ class PageDataCollector {
       url: window.location.href,
       title: document.title,
       timestamp: new Date().toISOString(),
-      markdown: markdown,
-      embeddings: null
+      markdown: markdown
     };
   }
 }

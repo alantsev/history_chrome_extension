@@ -30,7 +30,6 @@ class ContentScript {
 
   async sendToBackground(pageData) {
     try {
-      console.log(pageData);
       const response = await chrome.runtime.sendMessage({
         type: 'PAGE_VISITED',
         data: pageData
