@@ -1,0 +1,18 @@
+
+body { width: 800px; padding: 10px; }
+
+.page-container {
+  padding-top: 8px;
+  margin-top: 4px;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+}
+
+.page-entry {
+  border-bottom: 1px solid #ccc;
+  padding: 8px;
+  margin: 4px;
+}
+
+.timestamp { color: #666; font-size: 0.9em; }
+

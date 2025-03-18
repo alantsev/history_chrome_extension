@@ -13,7 +13,9 @@ const config = {
     entry: {
         'background/worker': './src/background/worker.js',
         'db/database': './src/db/database.js',
-        'popup/debug': './src/popup/debug.js'
+        'popup/debug': './src/popup/debug.js',
+        'popup/popup': './src/popup/popup.js',
+        'visualisation/visualisation': './src/visualisation/visualisation.js'
     },
     output: {
         path: path.resolve(__dirname, 'build'),
@@ -21,11 +23,6 @@ const config = {
         pathinfo: true,
     },
     plugins: [
-        new HtmlWebpackPlugin({
-            template: './src/popup/popup.html',
-            filename: 'popup/popup.html',
-            pathinfo: true
-        }),
         new CopyPlugin({
             patterns: [
                 {

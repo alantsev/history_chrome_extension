@@ -4,7 +4,9 @@ class DebugView {
   constructor() {
     this.db = new PageDatabase();
     this.container = document.getElementById('pages-container');
-    this.init();
+    document.getElementById('debug').addEventListener('click', async () => {
+      this.init();
+    });
   }
 
   async init() {
@@ -16,17 +18,17 @@ class DebugView {
   }
 
   async displayPages() {
-    const pages = [];
-    await this.db.iterate(page => pages.push(page));
+    const pages = await this.db.getAllPages();
 
     // Sort by timestamp, most recent first
-    pages.sort((a, b) => b.timestamp - a.timestamp);
+    pages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
     this.container.innerHTML = pages.map(page => `
             <div class="page-entry">
                 <div><strong>${page.title}</strong></div>
                 <div>${page.embeddings}</div>
                 <div><a href="${page.url}" target="_blank">${page.url}</a></div>
+                <div>${page.timestamp}</div>
                 <div class="timestamp">${new Date(page.timestamp).toLocaleString()}</div>
             </div>
         `).join('');
