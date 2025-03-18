@@ -2,6 +2,30 @@ import { UMAP } from 'umap-js';
 import { PageDatabase } from '../db/database.js';
 import * as d3 from 'd3';
 
+function cosineDistance(a, b) {
+  // Compute dot product
+  let dotProduct = 0;
+  // Compute magnitudes
+  let aMagnitude = 0;
+  let bMagnitude = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i] * b[i];
+    aMagnitude += a[i] * a[i];
+    bMagnitude += b[i] * b[i];
+  }
+
+  aMagnitude = Math.sqrt(aMagnitude);
+  bMagnitude = Math.sqrt(bMagnitude);
+
+  // Prevent division by zero
+  if (aMagnitude === 0 || bMagnitude === 0) return 1.0;
+
+  // Cosine similarity (1 - similarity = distance)
+  const similarity = dotProduct / (aMagnitude * bMagnitude);
+  return 1.0 - similarity;
+}
+
 class VisualisationView {
   constructor() {
     this.db = new PageDatabase();
@@ -34,8 +58,9 @@ class VisualisationView {
     // Configure UMAP
     const umap = new UMAP({
       nComponents: 2,
-      nNeighbors: 16,
-      minDist: 0.1
+      nNeighbors: 8,
+      minDist: 0.5,
+      distanceFn: cosineDistance
     });
 
     // Reduce dimensions
