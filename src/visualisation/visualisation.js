@@ -71,10 +71,13 @@ class VisualisationView {
       // First, calculate UMAP projection once
       await this.calculateUMAP();
       // Then, set up the visualization
-      this.setupVisualization();
-      this.setupResizeListener();
-      this.setupZoomControls();
-      this.setupSearchControls();
+
+      if (this.umap != null) {
+        this.setupVisualization();
+        this.setupResizeListener();
+        this.setupZoomControls();
+        this.setupSearchControls();
+      }
     } catch (error) {
       this.container.innerHTML = `<div class="error">Error loading data: ${error.message}</div>`;
       console.error(error);
@@ -131,6 +134,9 @@ class VisualisationView {
 
   async calculateUMAP() {
     const pages = await this.db.getAllPages();
+    if (pages.length < 32) {
+      return;
+    }
 
     // Extract embeddings and metadata
     this.embeddings = pages.map(p => p.embeddings);
