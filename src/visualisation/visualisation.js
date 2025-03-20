@@ -142,7 +142,7 @@ class VisualisationView {
     // Configure UMAP
     this.umap = new UMAP({
       nComponents: 2,
-      nNeighbors: 8,
+      nNeighbors: 15,
       minDist: 0.1,
       distanceFn: cosineDistance
     });
