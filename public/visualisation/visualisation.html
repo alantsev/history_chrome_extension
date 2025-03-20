@@ -5,8 +5,17 @@
     <link rel="stylesheet" href="../css/visualisation.css">
 </head>
 <body>
+    <div class="search-container">
+        <input type="text" id="search-input" placeholder="Enter text to search...">
+        <button id="search-button">Search</button>
+    </div>
     <div id="plot"></div>
     <div id="tooltip" class="tooltip"></div>
+    <div class="zoom-controls">
+        <button id="zoom-in" class="zoom-button">+</button>
+        <button id="zoom-out" class="zoom-button">-</button>
+        <button id="reset-zoom" class="zoom-button">R</button>
+    </div>
     <script src="visualisation.js" type="module"></script>
 </body>
 </html>

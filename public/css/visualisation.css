@@ -1,19 +1,29 @@
-
+/* Updates for visualisation.css */
 body {
     margin: 0;
     padding: 20px;
     font-family: Arial, sans-serif;
+    overflow: hidden; /* Prevent scrollbars when zooming */
 }
 
 .controls {
     margin-bottom: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
 }
 
 #plot {
-    width: 100%;
+    width: calc(100vw - 40px);
     height: calc(100vh - 100px);
     border: 1px solid #ddd;
     border-radius: 4px;
+    overflow: hidden; /* Ensure content doesn't overflow */
+}
+
+svg {
+    width: 100%;
+    height: 100%;
 }
 
 .tooltip {
@@ -26,6 +36,16 @@ body {
     opacity: 0;
     transition: opacity 0.2s;
     max-width: 300px;
+    z-index: 1000;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.zoom-controls {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    gap: 5px;
 }
 
 button {
@@ -42,18 +62,37 @@ button:hover {
     background-color: #45a049;
 }
 
-select {
+.zoom-button {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.search-container {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    display: flex;
+    gap: 5px;
+    z-index: 100;
+}
+
+#search-input {
     padding: 8px;
-    border-radius: 4px;
     border: 1px solid #ddd;
+    border-radius: 4px;
+    width: 250px;
 }
 
-.point {
-    cursor: pointer;
-    transition: r 0.2s;
+.search-result {
+    fill: red;
+    stroke: #fff;
+    stroke-width: 1px;
 }
 
-.point:hover {
-    r: 8;
-}
 

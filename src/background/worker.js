@@ -56,6 +56,18 @@ class BackgroundWorker {
           .catch(error => sendResponse({ status: 'error', error: error.message }));
         return true; // Required for async response
       }
+      if (message.type === 'GENERATE_EMBEDDINGS') {
+        BackgroundWorker.embeddingsGenerator.generateEmbeddings(message.data.text)
+          .then(embeddings => sendResponse({
+            status: 'success',
+            embeddings
+          }))
+          .catch(error => sendResponse({
+            status: 'error',
+            error: error.message
+          }));
+        return true; // Required for async response
+      }
     });
   }
 
