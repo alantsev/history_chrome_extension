@@ -14,5 +14,9 @@ body { width: 800px; padding: 10px; }
   margin: 4px;
 }
 
+.hidden {
+  display: none;
+}
+
 .timestamp { color: #666; font-size: 0.9em; }
 
