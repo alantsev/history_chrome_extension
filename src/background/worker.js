@@ -21,7 +21,8 @@ class EmbeddingsGenerator {
       if (!this.pipe) {
         await this.initializeTransformers();
 
-        this.pipe = await pipeline('feature-extraction', 'all-MiniLM-L6-v2', {
+        // this.pipe = await pipeline('feature-extraction', 'all-MiniLM-L6-v2', {
+        this.pipe = await pipeline('feature-extraction', 'gte-small', {
           cache: false,
           useCache: false
         });
