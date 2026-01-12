@@ -73,12 +73,18 @@ class BackgroundWorker {
 
 
   async handlePageVisited(pageData) {
-    const embeddings = await BackgroundWorker.embeddingsGenerator.generateEmbeddings(pageData.markdown);
+    // Generate embeddings for full markdown
+    const embeddingsFull = await BackgroundWorker.embeddingsGenerator.generateEmbeddings(pageData.markdown);
+
+    // Generate embeddings for skeleton markdown
+    const embeddingsSkeleton = await BackgroundWorker.embeddingsGenerator.generateEmbeddings(pageData.skeletonMarkdown);
+
     const db_data = {
       url: pageData.url,
       title: pageData.title,
       timestamp: pageData.timestamp,
-      embeddings: embeddings
+      embeddings: embeddingsFull,
+      embeddingsSkeleton: embeddingsSkeleton
     };
     await this.db.savePage(db_data);
   }

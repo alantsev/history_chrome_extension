@@ -57,6 +57,8 @@ class VisualisationView {
     this.umap = null;
     this.searchResult = null;
     this.embeddings = null;
+    this.pages = null;
+    this.embeddingType = 'full'; // 'full' or 'skeleton'
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => this.init());
@@ -68,7 +70,10 @@ class VisualisationView {
   async init() {
     try {
       this.container = document.getElementById('plot');
-      // First, calculate UMAP projection once
+      // Load pages data once
+      this.pages = await this.db.getAllPages();
+
+      // First, calculate UMAP projection
       await this.calculateUMAP();
       // Then, set up the visualization
 
@@ -77,6 +82,7 @@ class VisualisationView {
         this.setupResizeListener();
         this.setupZoomControls();
         this.setupSearchControls();
+        this.setupEmbeddingToggle();
       }
     } catch (error) {
       this.container.innerHTML = `<div class="error">Error loading data: ${error.message}</div>`;
@@ -133,14 +139,20 @@ class VisualisationView {
   }
 
   async calculateUMAP() {
-    const pages = await this.db.getAllPages();
-    if (pages.length < 32) {
+    if (this.pages.length < 32) {
       return;
     }
 
-    // Extract embeddings and metadata
-    this.embeddings = pages.map(p => p.embeddings);
-    this.metadata = pages.map(p => ({
+    // Extract embeddings based on current type
+    // Use skeleton embeddings if available and selected, fallback to full
+    this.embeddings = this.pages.map(p => {
+      if (this.embeddingType === 'skeleton' && p.embeddingsSkeleton) {
+        return p.embeddingsSkeleton;
+      }
+      return p.embeddings;
+    });
+
+    this.metadata = this.pages.map(p => ({
       url: p.url,
       timestamp: p.timestamp
     }));
@@ -153,7 +165,7 @@ class VisualisationView {
       distanceFn: cosineDistance
     });
 
-    // Reduce dimensions - only do this once
+    // Reduce dimensions
     this.reducedData = this.umap.fit(this.embeddings);
   }
 
@@ -256,8 +268,8 @@ class VisualisationView {
       .attr('cx', d => this.xScale(d[0]))
       .attr('cy', d => this.yScale(d[1]))
       .attr('r', 4)
-      .attr('fill', 'steelblue')
-      .attr('fill-opacity', 0.4) // Add semi-transparency
+      .attr('fill', '#2563eb')
+      .attr('fill-opacity', 0.5)
       .on('mouseover', (event, d) => {
         const i = this.reducedData.indexOf(d);
         const transform = d3.zoomTransform(this.svg.node());
@@ -322,6 +334,33 @@ class VisualisationView {
         this.handleSearch(searchInput.value);
       }
     });
+  }
+
+  setupEmbeddingToggle() {
+    const radios = document.querySelectorAll('input[name="embedding-type"]');
+    radios.forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        this.switchEmbeddingType(e.target.value);
+      });
+    });
+  }
+
+  async switchEmbeddingType(type) {
+    if (type === this.embeddingType) return;
+
+    this.embeddingType = type;
+    this.searchResult = null;
+
+    // Remove existing visualization
+    d3.select('#plot svg').remove();
+
+    // Recalculate UMAP with new embedding type
+    await this.calculateUMAP();
+
+    // Re-render
+    if (this.umap != null) {
+      this.setupVisualization();
+    }
   }
 
   async handleSearch(text) {
