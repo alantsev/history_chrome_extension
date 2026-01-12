@@ -66,6 +66,13 @@ class VisualisationView {
       skeleton: null
     };
 
+    // Cache for search results across both views
+    this.searchCache = {
+      text: null,
+      embedding: null,
+      projections: { full: null, skeleton: null }
+    };
+
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => this.init());
     } else {
@@ -371,7 +378,6 @@ class VisualisationView {
     if (type === this.embeddingType) return;
 
     this.embeddingType = type;
-    this.searchResult = null;
 
     // Remove existing visualization
     d3.select('#plot svg').remove();
@@ -382,6 +388,21 @@ class VisualisationView {
     // Re-render
     if (this.umap != null) {
       this.setupVisualization();
+
+      // Restore search result from cache if available
+      if (this.searchCache.text && this.searchCache.projections[type]) {
+        this.searchResult = {
+          projection: this.searchCache.projections[type],
+          text: this.searchCache.text
+        };
+        this.updateSearchResult(this.searchResult.projection, this.searchResult.text);
+      } else if (this.searchCache.text && this.searchCache.embedding) {
+        // Calculate projection for new view if not cached
+        const projection = this.umap.transform([this.searchCache.embedding])[0];
+        this.searchCache.projections[type] = projection;
+        this.searchResult = { projection, text: this.searchCache.text };
+        this.updateSearchResult(projection, this.searchCache.text);
+      }
     }
   }
 
@@ -398,8 +419,20 @@ class VisualisationView {
       // Get embeddings for the search text using our service
       const searchEmbedding = await getSearchEmbeddings(text);
 
-      // Project the search embedding to the UMAP space
+      // Cache the search embedding and text
+      this.searchCache.text = text;
+      this.searchCache.embedding = searchEmbedding;
+      this.searchCache.projections = { full: null, skeleton: null };
+
+      // Project for current view
       const searchProjection = this.umap.transform([searchEmbedding])[0];
+      this.searchCache.projections[this.embeddingType] = searchProjection;
+
+      // Pre-calculate projection for the other view if UMAP is cached
+      const otherType = this.embeddingType === 'full' ? 'skeleton' : 'full';
+      if (this.umapCache[otherType]) {
+        this.searchCache.projections[otherType] = this.umapCache[otherType].umap.transform([searchEmbedding])[0];
+      }
 
       // Update the visualization with the search result
       this.updateSearchResult(searchProjection, text);
