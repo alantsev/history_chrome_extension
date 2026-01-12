@@ -58,20 +58,6 @@ class VisualisationView {
     this.searchResult = null;
     this.embeddings = null;
     this.pages = null;
-    this.embeddingType = 'full'; // 'full' or 'skeleton'
-
-    // Cache for UMAP projections to avoid recalculation
-    this.umapCache = {
-      full: null,     // { umap, reducedData, embeddings }
-      skeleton: null
-    };
-
-    // Cache for search results across both views
-    this.searchCache = {
-      text: null,
-      embedding: null,
-      projections: { full: null, skeleton: null }
-    };
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => this.init());
@@ -83,19 +69,15 @@ class VisualisationView {
   async init() {
     try {
       this.container = document.getElementById('plot');
-      // Load pages data once
       this.pages = await this.db.getAllPages();
 
-      // First, calculate UMAP projection
       await this.calculateUMAP();
-      // Then, set up the visualization
 
       if (this.umap != null) {
         this.setupVisualization();
         this.setupResizeListener();
         this.setupZoomControls();
         this.setupSearchControls();
-        this.setupEmbeddingToggle();
       }
     } catch (error) {
       this.container.innerHTML = `<div class="error">Error loading data: ${error.message}</div>`;
@@ -156,30 +138,12 @@ class VisualisationView {
       return;
     }
 
-    // Check cache first
-    const cached = this.umapCache[this.embeddingType];
-    if (cached) {
-      this.umap = cached.umap;
-      this.reducedData = cached.reducedData;
-      this.embeddings = cached.embeddings;
-      return;
-    }
-
-    // Extract embeddings based on current type
-    // Use skeleton embeddings if available and selected, fallback to full
-    this.embeddings = this.pages.map(p => {
-      if (this.embeddingType === 'skeleton' && p.embeddingsSkeleton) {
-        return p.embeddingsSkeleton;
-      }
-      return p.embeddings;
-    });
-
+    this.embeddings = this.pages.map(p => p.embeddings);
     this.metadata = this.pages.map(p => ({
       url: p.url,
       timestamp: p.timestamp
     }));
 
-    // Configure UMAP
     this.umap = new UMAP({
       nComponents: 2,
       nNeighbors: 15,
@@ -187,15 +151,7 @@ class VisualisationView {
       distanceFn: cosineDistance
     });
 
-    // Reduce dimensions
     this.reducedData = this.umap.fit(this.embeddings);
-
-    // Cache the result
-    this.umapCache[this.embeddingType] = {
-      umap: this.umap,
-      reducedData: this.reducedData,
-      embeddings: this.embeddings
-    };
   }
 
   setupVisualization() {
@@ -365,86 +321,26 @@ class VisualisationView {
     });
   }
 
-  setupEmbeddingToggle() {
-    const radios = document.querySelectorAll('input[name="embedding-type"]');
-    radios.forEach(radio => {
-      radio.addEventListener('change', (e) => {
-        this.switchEmbeddingType(e.target.value);
-      });
-    });
-  }
-
-  async switchEmbeddingType(type) {
-    if (type === this.embeddingType) return;
-
-    this.embeddingType = type;
-
-    // Remove existing visualization
-    d3.select('#plot svg').remove();
-
-    // Recalculate UMAP with new embedding type
-    await this.calculateUMAP();
-
-    // Re-render
-    if (this.umap != null) {
-      this.setupVisualization();
-
-      // Restore search result from cache if available
-      if (this.searchCache.text && this.searchCache.projections[type]) {
-        this.searchResult = {
-          projection: this.searchCache.projections[type],
-          text: this.searchCache.text
-        };
-        this.updateSearchResult(this.searchResult.projection, this.searchResult.text);
-      } else if (this.searchCache.text && this.searchCache.embedding) {
-        // Calculate projection for new view if not cached
-        const projection = this.umap.transform([this.searchCache.embedding])[0];
-        this.searchCache.projections[type] = projection;
-        this.searchResult = { projection, text: this.searchCache.text };
-        this.updateSearchResult(projection, this.searchCache.text);
-      }
-    }
-  }
-
   async handleSearch(text) {
     if (!text.trim()) return;
 
     try {
-      // Show loading indicator
       const searchButton = document.getElementById('search-button');
       const originalButtonText = searchButton.textContent;
       searchButton.textContent = 'Loading...';
       searchButton.disabled = true;
 
-      // Get embeddings for the search text using our service
       const searchEmbedding = await getSearchEmbeddings(text);
-
-      // Cache the search embedding and text
-      this.searchCache.text = text;
-      this.searchCache.embedding = searchEmbedding;
-      this.searchCache.projections = { full: null, skeleton: null };
-
-      // Project for current view
       const searchProjection = this.umap.transform([searchEmbedding])[0];
-      this.searchCache.projections[this.embeddingType] = searchProjection;
 
-      // Pre-calculate projection for the other view if UMAP is cached
-      const otherType = this.embeddingType === 'full' ? 'skeleton' : 'full';
-      if (this.umapCache[otherType]) {
-        this.searchCache.projections[otherType] = this.umapCache[otherType].umap.transform([searchEmbedding])[0];
-      }
-
-      // Update the visualization with the search result
       this.updateSearchResult(searchProjection, text);
 
-      // Reset button
       searchButton.textContent = originalButtonText;
       searchButton.disabled = false;
     } catch (error) {
       console.error('Error processing search:', error);
       alert('Error processing search. Please try again.');
 
-      // Reset button on error too
       const searchButton = document.getElementById('search-button');
       searchButton.textContent = 'Search';
       searchButton.disabled = false;
