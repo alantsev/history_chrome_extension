@@ -60,6 +60,12 @@ class VisualisationView {
     this.pages = null;
     this.embeddingType = 'full'; // 'full' or 'skeleton'
 
+    // Cache for UMAP projections to avoid recalculation
+    this.umapCache = {
+      full: null,     // { umap, reducedData, embeddings }
+      skeleton: null
+    };
+
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => this.init());
     } else {
@@ -143,6 +149,15 @@ class VisualisationView {
       return;
     }
 
+    // Check cache first
+    const cached = this.umapCache[this.embeddingType];
+    if (cached) {
+      this.umap = cached.umap;
+      this.reducedData = cached.reducedData;
+      this.embeddings = cached.embeddings;
+      return;
+    }
+
     // Extract embeddings based on current type
     // Use skeleton embeddings if available and selected, fallback to full
     this.embeddings = this.pages.map(p => {
@@ -167,6 +182,13 @@ class VisualisationView {
 
     // Reduce dimensions
     this.reducedData = this.umap.fit(this.embeddings);
+
+    // Cache the result
+    this.umapCache[this.embeddingType] = {
+      umap: this.umap,
+      reducedData: this.reducedData,
+      embeddings: this.embeddings
+    };
   }
 
   setupVisualization() {
