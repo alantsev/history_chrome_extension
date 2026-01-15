@@ -41,6 +41,21 @@ async function getSearchEmbeddings(text) {
   });
 }
 
+async function searchSimilar(text, k = 10) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({
+      type: 'SEARCH_SIMILAR',
+      data: { text, k }
+    }, response => {
+      if (response && response.status === 'success') {
+        resolve(response.results);
+      } else {
+        reject(new Error(response?.error || 'Failed to search'));
+      }
+    });
+  });
+}
+
 class VisualisationView {
   constructor() {
     this.db = new PageDatabase();
@@ -312,6 +327,7 @@ class VisualisationView {
   setupSearchControls() {
     const searchButton = document.getElementById('search-button');
     const searchInput = document.getElementById('search-input');
+    const closeButton = document.getElementById('close-results');
 
     searchButton.addEventListener('click', () => this.handleSearch(searchInput.value));
     searchInput.addEventListener('keypress', (e) => {
@@ -319,6 +335,8 @@ class VisualisationView {
         this.handleSearch(searchInput.value);
       }
     });
+
+    closeButton.addEventListener('click', () => this.hideSearchResults());
   }
 
   async handleSearch(text) {
@@ -330,10 +348,16 @@ class VisualisationView {
       searchButton.textContent = 'Loading...';
       searchButton.disabled = true;
 
-      const searchEmbedding = await getSearchEmbeddings(text);
-      const searchProjection = this.umap.transform([searchEmbedding])[0];
+      // Fetch both embeddings for projection and search results
+      const [searchEmbedding, searchResults] = await Promise.all([
+        getSearchEmbeddings(text),
+        searchSimilar(text, 10)
+      ]);
 
+      const searchProjection = this.umap.transform([searchEmbedding])[0];
       this.updateSearchResult(searchProjection, text);
+      this.displaySearchResults(searchResults);
+      this.highlightSearchResults(searchResults);
 
       searchButton.textContent = originalButtonText;
       searchButton.disabled = false;
@@ -345,6 +369,114 @@ class VisualisationView {
       searchButton.textContent = 'Search';
       searchButton.disabled = false;
     }
+  }
+
+  displaySearchResults(results) {
+    const panel = document.getElementById('search-results');
+    const list = document.getElementById('search-results-list');
+
+    if (results.length === 0) {
+      list.innerHTML = '<div class="result-item"><div class="result-title">No results found</div></div>';
+    } else {
+      list.innerHTML = results.map((result, index) => {
+        const similarity = Math.round((1 - result.distance) * 100);
+        const date = new Date(result.timestamp).toLocaleDateString();
+        return `
+          <div class="result-item" data-url="${result.url}" data-index="${index}">
+            <div class="result-title">${result.title || result.url}</div>
+            <div class="result-meta">
+              <span class="result-similarity">${similarity}%</span>
+              ${date}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Add click handlers to results
+      list.querySelectorAll('.result-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const url = item.dataset.url;
+          this.focusOnUrl(url);
+        });
+        item.addEventListener('mouseenter', () => {
+          const url = item.dataset.url;
+          this.highlightPoint(url, true);
+        });
+        item.addEventListener('mouseleave', () => {
+          const url = item.dataset.url;
+          this.highlightPoint(url, false);
+        });
+      });
+    }
+
+    panel.classList.remove('hidden');
+  }
+
+  hideSearchResults() {
+    const panel = document.getElementById('search-results');
+    panel.classList.add('hidden');
+    this.clearHighlights();
+  }
+
+  highlightSearchResults(results) {
+    // Clear previous highlights
+    this.clearHighlights();
+
+    // Highlight points that are in search results
+    const resultUrls = new Set(results.map(r => r.url));
+
+    d3.selectAll('.point').each((d, i, nodes) => {
+      if (i < this.metadata.length && resultUrls.has(this.metadata[i].url)) {
+        d3.select(nodes[i])
+          .classed('search-match', true)
+          .attr('fill', '#f59e0b')
+          .attr('fill-opacity', 0.9);
+      }
+    });
+  }
+
+  clearHighlights() {
+    d3.selectAll('.point.search-match')
+      .classed('search-match', false)
+      .attr('fill', '#2563eb')
+      .attr('fill-opacity', 0.5);
+  }
+
+  highlightPoint(url, highlight) {
+    const index = this.metadata.findIndex(m => m.url === url);
+    if (index < 0) return;
+
+    const transform = d3.zoomTransform(this.svg.node());
+
+    d3.selectAll('.point').each((d, i, nodes) => {
+      if (i === index) {
+        d3.select(nodes[i])
+          .attr('fill', highlight ? '#ef4444' : '#f59e0b')
+          .attr('r', highlight ? 8 / transform.k : 4 / transform.k);
+      }
+    });
+  }
+
+  focusOnUrl(url) {
+    const index = this.metadata.findIndex(m => m.url === url);
+    if (index < 0) {
+      window.open(url, '_blank');
+      return;
+    }
+
+    const point = this.reducedData[index];
+    const x = this.xScale(point[0]);
+    const y = this.yScale(point[1]);
+
+    // Zoom to the point
+    const transform = d3.zoomIdentity
+      .translate(this.width / 2, this.height / 2)
+      .scale(4)
+      .translate(-x, -y);
+
+    this.svg.transition()
+      .duration(500)
+      .call(this.zoom.transform, transform);
   }
 
   updateSearchResult(projection, text) {
