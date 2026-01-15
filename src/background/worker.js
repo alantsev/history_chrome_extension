@@ -1,5 +1,6 @@
 import { pipeline, env } from '@xenova/transformers';
 import { PageDatabase } from '../db/database.js';
+import { HNSW } from '../hnsw/hnsw.js';
 
 class EmbeddingsGenerator {
   constructor() {
@@ -45,7 +46,42 @@ class BackgroundWorker {
 
   constructor() {
     this.db = new PageDatabase();
+    this.hnsw = null;
+    this.hnswDirty = false;
+    this.initHNSW();
     this.setupMessageListeners();
+    this.setupPeriodicSave();
+  }
+
+  async initHNSW() {
+    try {
+      const savedIndex = await this.db.loadHNSWIndex();
+      if (savedIndex) {
+        this.hnsw = HNSW.deserialize(savedIndex);
+        console.log('HNSW index loaded:', this.hnsw.stats());
+      } else {
+        this.hnsw = new HNSW({ M: 16, efConstruction: 200 });
+        console.log('Created new HNSW index');
+      }
+    } catch (error) {
+      console.error('Error initializing HNSW:', error);
+      this.hnsw = new HNSW({ M: 16, efConstruction: 200 });
+    }
+  }
+
+  setupPeriodicSave() {
+    // Save HNSW index every 30 seconds if dirty
+    setInterval(async () => {
+      if (this.hnswDirty && this.hnsw) {
+        try {
+          await this.db.saveHNSWIndex(this.hnsw.serialize());
+          this.hnswDirty = false;
+          console.log('HNSW index saved');
+        } catch (error) {
+          console.error('Error saving HNSW index:', error);
+        }
+      }
+    }, 30000);
   }
 
   setupMessageListeners() {
@@ -68,9 +104,25 @@ class BackgroundWorker {
           }));
         return true; // Required for async response
       }
+      if (message.type === 'SEARCH_SIMILAR') {
+        this.handleSearch(message.data)
+          .then(results => sendResponse({ status: 'success', results }))
+          .catch(error => sendResponse({ status: 'error', error: error.message }));
+        return true;
+      }
+      if (message.type === 'GET_HNSW_STATS') {
+        const stats = this.hnsw ? this.hnsw.stats() : null;
+        sendResponse({ status: 'success', stats });
+        return false;
+      }
+      if (message.type === 'GET_SIMILAR_TO_URL') {
+        this.handleSimilarToUrl(message.data)
+          .then(results => sendResponse({ status: 'success', results }))
+          .catch(error => sendResponse({ status: 'error', error: error.message }));
+        return true;
+      }
     });
   }
-
 
   async handlePageVisited(pageData) {
     const embeddings = await BackgroundWorker.embeddingsGenerator.generateEmbeddings(pageData.markdown);
@@ -82,6 +134,78 @@ class BackgroundWorker {
       embeddings: embeddings
     };
     await this.db.savePage(db_data);
+
+    // Add to HNSW index
+    if (this.hnsw) {
+      this.hnsw.insert(embeddings, { url: pageData.url, title: pageData.title });
+      this.hnswDirty = true;
+    }
+  }
+
+  async handleSearch(data) {
+    const { text, k = 10 } = data;
+
+    // Generate embeddings for query
+    const queryEmbeddings = await BackgroundWorker.embeddingsGenerator.generateEmbeddings(text);
+
+    if (!this.hnsw || this.hnsw.nodes.size === 0) {
+      return [];
+    }
+
+    // Search HNSW
+    const results = this.hnsw.search(queryEmbeddings, k);
+
+    // Enrich with full page data
+    const enrichedResults = [];
+    for (const result of results) {
+      const page = await this.db.getPageByUrl(result.value.url);
+      if (page) {
+        enrichedResults.push({
+          url: page.url,
+          title: page.title,
+          timestamp: page.timestamp,
+          distance: result.distance
+        });
+      }
+    }
+
+    return enrichedResults;
+  }
+
+  async handleSimilarToUrl(data) {
+    const { url, k = 10 } = data;
+
+    // Get the page's embeddings from database
+    const page = await this.db.getPageByUrl(url);
+    if (!page || !page.embeddings) {
+      return [];
+    }
+
+    if (!this.hnsw || this.hnsw.nodes.size === 0) {
+      return [];
+    }
+
+    // Search HNSW with the page's embeddings (k+1 to exclude self)
+    const results = this.hnsw.search(page.embeddings, k + 1);
+
+    // Filter out the query page itself and enrich with full data
+    const enrichedResults = [];
+    for (const result of results) {
+      if (result.value.url === url) continue;  // Skip self
+      if (enrichedResults.length >= k) break;
+
+      const resultPage = await this.db.getPageByUrl(result.value.url);
+      if (resultPage) {
+        enrichedResults.push({
+          url: resultPage.url,
+          title: resultPage.title,
+          timestamp: resultPage.timestamp,
+          distance: result.distance
+        });
+      }
+    }
+
+    return enrichedResults;
   }
 }
 

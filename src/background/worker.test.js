@@ -40,6 +40,9 @@ vi.mock('../db/database.js', () => ({
     savePage(data) { return mockSavePage(data); }
     getAllPages() { return Promise.resolve([]); }
     iterate(cb) { return Promise.resolve(); }
+    loadHNSWIndex() { return Promise.resolve(null); }
+    saveHNSWIndex(data) { return Promise.resolve(); }
+    getPageByUrl(url) { return Promise.resolve(null); }
   }
 }));
 

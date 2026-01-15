@@ -4,7 +4,13 @@
     <link rel="stylesheet" href="../css/popup.css" />
   </head>
   <body>
-    <h2>Stored Pages</h2>
+    <h2>Similar Pages</h2>
+
+    <div id="similar-container">
+      <div id="loading">Loading...</div>
+      <div id="similar-pages"></div>
+      <div id="no-results" class="hidden">No similar pages found. Browse more pages to build your history.</div>
+    </div>
 
     <div class="page-container">
       <a id="visualisation" href="../visualisation/visualisation.html" target="_umap_extension_visualisation">Show UMAP History</a>
@@ -17,4 +23,3 @@
     <script src="popup.js" type="module"></script>
   </body>
 </html>
-

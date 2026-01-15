@@ -1,11 +1,81 @@
 
-body { width: 800px; padding: 10px; }
+body {
+  width: 400px;
+  padding: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  margin: 0;
+}
+
+h2 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  color: #1a1a1a;
+}
+
+#similar-container {
+  margin-bottom: 16px;
+}
+
+#loading {
+  color: #666;
+  padding: 20px 0;
+  text-align: center;
+}
+
+#no-results {
+  color: #666;
+  padding: 20px 0;
+  text-align: center;
+  font-size: 13px;
+}
+
+.similar-entry {
+  padding: 10px;
+  border-bottom: 1px solid #eee;
+}
+
+.similar-entry:last-child {
+  border-bottom: none;
+}
+
+.similar-entry:hover {
+  background-color: #f8f9fa;
+}
+
+.similar-title {
+  display: block;
+  color: #1a73e8;
+  text-decoration: none;
+  font-weight: 500;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.similar-title:hover {
+  text-decoration: underline;
+}
+
+.similar-meta {
+  font-size: 12px;
+  color: #5f6368;
+}
 
 .page-container {
-  padding-top: 8px;
-  margin-top: 4px;
-  padding-bottom: 8px;
-  margin-bottom: 4px;
+  padding: 8px 0;
+  border-top: 1px solid #eee;
+}
+
+.page-container a {
+  color: #1a73e8;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.page-container a:hover {
+  text-decoration: underline;
 }
 
 .page-entry {
@@ -18,5 +88,7 @@ body { width: 800px; padding: 10px; }
   display: none;
 }
 
-.timestamp { color: #666; font-size: 0.9em; }
-
+.timestamp {
+  color: #666;
+  font-size: 0.9em;
+}
