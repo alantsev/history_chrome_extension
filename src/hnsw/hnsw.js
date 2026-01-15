@@ -1,14 +1,20 @@
 /**
  * HNSW (Hierarchical Navigable Small World) Implementation
- * A simple JavaScript implementation for approximate nearest neighbor search.
+ * A JavaScript implementation for approximate nearest neighbor search.
  *
  * Based on the paper by Yu. A. Malkov, D. A. Yashunin.
+ * Implementation details follow Redis vector-sets module approach.
  */
 
 const HNSW_DEFAULT_M = 16;      // Max connections per layer
 const HNSW_DEFAULT_EF = 200;    // Size of dynamic candidate list during construction
 const HNSW_MAX_LEVEL = 16;      // Maximum level a node can reach
 const HNSW_P = 0.25;            // Probability of level increase
+
+// Aggressiveness levels for neighbor selection (Redis approach)
+const HNSW_AGGRESSIVE_NONE = 0;      // Diversity + quality checks
+const HNSW_AGGRESSIVE_NO_DIV = 1;    // Skip diversity check
+const HNSW_AGGRESSIVE_REPLACE = 2;   // Can replace existing links
 
 /**
  * Calculate cosine distance between two vectors.
@@ -134,7 +140,7 @@ class MaxPriorityQueue extends PriorityQueue {
 }
 
 /**
- * HNSW Node
+ * HNSW Node - with cached worst neighbor tracking (Redis approach)
  */
 class HNSWNode {
   constructor(id, vector, level, value = null) {
@@ -142,11 +148,69 @@ class HNSWNode {
     this.vector = vector;
     this.level = level;
     this.value = value;
-    // Connections per layer: layers[i] = Set of node IDs
+    // Connections per layer: layers[i] = Map of node ID -> distance
     this.layers = [];
+    // Cached worst neighbor per layer for O(1) lookup
+    this.worstNeighbor = [];
     for (let i = 0; i <= level; i++) {
-      this.layers.push(new Set());
+      this.layers.push(new Map());  // neighborId -> distance
+      this.worstNeighbor.push({ id: null, distance: -Infinity });
     }
+  }
+
+  /**
+   * Update worst neighbor cache after adding a neighbor.
+   */
+  updateWorstOnAdd(layer, neighborId, distance) {
+    if (distance > this.worstNeighbor[layer].distance) {
+      this.worstNeighbor[layer] = { id: neighborId, distance };
+    }
+  }
+
+  /**
+   * Recompute worst neighbor cache after removal.
+   */
+  recomputeWorst(layer) {
+    let worst = { id: null, distance: -Infinity };
+    for (const [id, dist] of this.layers[layer]) {
+      if (dist > worst.distance) {
+        worst = { id, distance: dist };
+      }
+    }
+    this.worstNeighbor[layer] = worst;
+  }
+
+  /**
+   * Add a neighbor connection with distance caching.
+   */
+  addNeighbor(layer, neighborId, distance) {
+    this.layers[layer].set(neighborId, distance);
+    this.updateWorstOnAdd(layer, neighborId, distance);
+  }
+
+  /**
+   * Remove a neighbor connection and update cache.
+   */
+  removeNeighbor(layer, neighborId) {
+    const wasWorst = this.worstNeighbor[layer].id === neighborId;
+    this.layers[layer].delete(neighborId);
+    if (wasWorst) {
+      this.recomputeWorst(layer);
+    }
+  }
+
+  /**
+   * Get neighbor IDs for iteration.
+   */
+  getNeighborIds(layer) {
+    return this.layers[layer].keys();
+  }
+
+  /**
+   * Get neighbor count at layer.
+   */
+  neighborCount(layer) {
+    return this.layers[layer].size;
   }
 }
 
@@ -207,8 +271,8 @@ class HNSW {
       }
 
       // Explore neighbors at this layer
-      const neighbors = current.node.layers[layer] || new Set();
-      for (const neighborId of neighbors) {
+      const neighborIds = current.node.layers[layer] ? current.node.getNeighborIds(layer) : [];
+      for (const neighborId of neighborIds) {
         if (visited.has(neighborId)) continue;
         visited.add(neighborId);
 
@@ -238,11 +302,52 @@ class HNSW {
   }
 
   /**
-   * Select neighbors using simple heuristic.
+   * Check diversity: is candidate closer to existing selected neighbors
+   * than to the node we're selecting for? (Redis heuristic)
    */
-  _selectNeighbors(candidates, maxConnections) {
-    // Simple strategy: take the closest ones
-    return candidates.slice(0, maxConnections);
+  _checkDiversity(candidateVector, selectedNeighbors, distToNode) {
+    for (const sel of selectedNeighbors) {
+      const distToSelected = cosineDistance(candidateVector, sel.node.vector);
+      if (distToSelected < distToNode) {
+        return false;  // Candidate is closer to an already-selected neighbor
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Select neighbors using Redis-style heuristic with diversity check.
+   */
+  _selectNeighbors(node, candidates, maxConnections) {
+    if (candidates.length <= maxConnections) {
+      return candidates;
+    }
+
+    const selected = [];
+    const remaining = [...candidates];
+
+    // Greedily select neighbors with diversity consideration
+    while (selected.length < maxConnections && remaining.length > 0) {
+      // Find best candidate that passes diversity check
+      let bestIdx = -1;
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i];
+        if (this._checkDiversity(candidate.node.vector, selected, candidate.distance)) {
+          bestIdx = i;
+          break;  // Take first (closest) that passes
+        }
+      }
+
+      if (bestIdx === -1) {
+        // No candidate passes diversity, take closest remaining
+        bestIdx = 0;
+      }
+
+      selected.push(remaining[bestIdx]);
+      remaining.splice(bestIdx, 1);
+    }
+
+    return selected;
   }
 
   /**
@@ -277,17 +382,11 @@ class HNSW {
     // For each layer from min(level, maxLevel) down to 0
     for (let lc = Math.min(level, this.maxLevel); lc >= 0; lc--) {
       const results = this._searchLayer(normalizedVector, [currentNode], this.efConstruction, lc);
-      const neighbors = this._selectNeighbors(results, this._maxConnections(lc));
+      const neighbors = this._selectNeighbors(node, results, this._maxConnections(lc));
 
-      // Connect new node to neighbors
-      for (const { node: neighbor } of neighbors) {
-        node.layers[lc].add(neighbor.id);
-        neighbor.layers[lc].add(node.id);
-
-        // Prune neighbor's connections if needed
-        if (neighbor.layers[lc].size > this._maxConnections(lc)) {
-          this._pruneConnections(neighbor, lc);
-        }
+      // Connect new node to neighbors using Redis-style multi-level aggressive linking
+      for (const { node: neighbor, distance } of neighbors) {
+        this._addBidirectionalLink(node, neighbor, lc, distance);
       }
 
       if (results.length > 0) {
@@ -305,37 +404,103 @@ class HNSW {
   }
 
   /**
+   * Add bidirectional link with Redis-style aggressive retries.
+   * Ensures links are always bidirectional - if one direction fails, neither is added.
+   */
+  _addBidirectionalLink(nodeA, nodeB, layer, distance) {
+    // Already connected in both directions?
+    const aHasB = nodeA.layers[layer].has(nodeB.id);
+    const bHasA = nodeB.layers[layer].has(nodeA.id);
+    if (aHasB && bHasA) return true;
+
+    // Try to add both directions
+    const maxConn = this._maxConnections(layer);
+    
+    // Check if A can accept B
+    let canAddAtoB = aHasB || nodeA.neighborCount(layer) < maxConn;
+    if (!canAddAtoB) {
+      // Try aggressive: can we replace worst?
+      const worstA = nodeA.worstNeighbor[layer];
+      canAddAtoB = distance < worstA.distance;
+    }
+
+    // Check if B can accept A  
+    let canAddBtoA = bHasA || nodeB.neighborCount(layer) < maxConn;
+    if (!canAddBtoA) {
+      // Try aggressive: can we replace worst?
+      const worstB = nodeB.worstNeighbor[layer];
+      canAddBtoA = distance < worstB.distance;
+    }
+
+    // Only proceed if both directions are possible
+    if (!canAddAtoB || !canAddBtoA) return false;
+
+    // Add A -> B
+    if (!aHasB) {
+      if (nodeA.neighborCount(layer) >= maxConn) {
+        // Replace worst
+        const worst = nodeA.worstNeighbor[layer];
+        const worstNeighbor = this.nodes.get(worst.id);
+        if (worstNeighbor) {
+          nodeA.removeNeighbor(layer, worst.id);
+          worstNeighbor.removeNeighbor(layer, nodeA.id);
+        }
+      }
+      nodeA.addNeighbor(layer, nodeB.id, distance);
+    }
+
+    // Add B -> A
+    if (!bHasA) {
+      if (nodeB.neighborCount(layer) >= maxConn) {
+        // Replace worst
+        const worst = nodeB.worstNeighbor[layer];
+        const worstNeighbor = this.nodes.get(worst.id);
+        if (worstNeighbor) {
+          nodeB.removeNeighbor(layer, worst.id);
+          worstNeighbor.removeNeighbor(layer, nodeB.id);
+        }
+      }
+      nodeB.addNeighbor(layer, nodeA.id, distance);
+    }
+
+    return true;
+  }
+
+  /**
    * Prune connections to maintain max connections limit.
+   * Does NOT remove reverse links (Redis approach preserves bidirectional property).
    */
   _pruneConnections(node, layer) {
     const maxConn = this._maxConnections(layer);
-    if (node.layers[layer].size <= maxConn) return;
+    if (node.neighborCount(layer) <= maxConn) return;
 
     // Get all neighbors with distances
     const neighbors = [];
-    for (const neighborId of node.layers[layer]) {
+    for (const [neighborId, dist] of node.layers[layer]) {
       const neighbor = this.nodes.get(neighborId);
       if (neighbor) {
-        neighbors.push({
-          node: neighbor,
-          distance: cosineDistance(node.vector, neighbor.vector)
-        });
+        neighbors.push({ node: neighbor, id: neighborId, distance: dist });
       }
     }
 
-    // Sort by distance and keep closest
+    // Sort by distance and keep closest (with diversity consideration)
     neighbors.sort((a, b) => a.distance - b.distance);
-    const toKeep = new Set(neighbors.slice(0, maxConn).map(n => n.node.id));
+    const selected = this._selectNeighbors(node, neighbors, maxConn);
+    const toKeep = new Set(selected.map(n => n.node.id));
 
-    // Remove connections not in toKeep
-    for (const neighborId of node.layers[layer]) {
+    // Remove connections not in toKeep (maintaining bidirectionality)
+    const toRemove = [];
+    for (const [neighborId, _] of node.layers[layer]) {
       if (!toKeep.has(neighborId)) {
-        node.layers[layer].delete(neighborId);
-        // Remove reverse connection
-        const neighbor = this.nodes.get(neighborId);
-        if (neighbor) {
-          neighbor.layers[layer].delete(node.id);
-        }
+        toRemove.push(neighborId);
+      }
+    }
+    for (const neighborId of toRemove) {
+      node.removeNeighbor(layer, neighborId);
+      // Remove reverse link to maintain bidirectionality
+      const neighbor = this.nodes.get(neighborId);
+      if (neighbor && neighbor.layers[layer]) {
+        neighbor.removeNeighbor(layer, node.id);
       }
     }
   }
@@ -371,19 +536,29 @@ class HNSW {
   }
 
   /**
-   * Delete a node from the index.
+   * Delete a node from the index with reconnection (Redis approach).
+   * Reconnects orphaned neighbors to maintain graph connectivity.
    */
   delete(id) {
     const node = this.nodes.get(id);
     if (!node) return false;
 
-    // Remove all connections
+    // For each layer, collect neighbors and reconnect them
     for (let lc = 0; lc <= node.level; lc++) {
-      for (const neighborId of node.layers[lc]) {
+      const orphanedNeighbors = [];
+      
+      // Remove connections to this node and collect orphaned neighbors
+      for (const [neighborId, _] of node.layers[lc]) {
         const neighbor = this.nodes.get(neighborId);
         if (neighbor) {
-          neighbor.layers[lc].delete(id);
+          neighbor.removeNeighbor(lc, id);
+          orphanedNeighbors.push(neighbor);
         }
+      }
+
+      // Reconnect orphaned neighbors using scoring matrix (Redis approach)
+      if (orphanedNeighbors.length >= 2) {
+        this._reconnectNodes(orphanedNeighbors, lc);
       }
     }
 
@@ -408,6 +583,93 @@ class HNSW {
     }
 
     return true;
+  }
+
+  /**
+   * Reconnect orphaned nodes after deletion using a scoring matrix.
+   * Pairs nodes that would benefit most from connection (Redis approach).
+   */
+  _reconnectNodes(nodes, layer) {
+    const maxConn = this._maxConnections(layer);
+    const n = nodes.length;
+    
+    // Build scoring matrix: score = how much node i wants to connect to node j
+    // Higher score = more slots available AND closer distance
+    const scores = [];
+    for (let i = 0; i < n; i++) {
+      scores[i] = [];
+      for (let j = 0; j < n; j++) {
+        if (i === j) {
+          scores[i][j] = -Infinity;
+          continue;
+        }
+        
+        const nodeI = nodes[i];
+        const nodeJ = nodes[j];
+        
+        // Already connected?
+        if (nodeI.layers[layer].has(nodeJ.id)) {
+          scores[i][j] = -Infinity;
+          continue;
+        }
+        
+        // Calculate score based on available slots and distance
+        const slotsAvailable = maxConn - nodeI.neighborCount(layer);
+        if (slotsAvailable <= 0) {
+          scores[i][j] = -Infinity;
+          continue;
+        }
+        
+        const distance = cosineDistance(nodeI.vector, nodeJ.vector);
+        // Score: prioritize nodes with more slots and closer distance
+        // Using inverse distance so closer = higher score
+        scores[i][j] = slotsAvailable * (1 / (distance + 0.001));
+      }
+    }
+
+    // Greedy pairing: repeatedly find best pair and connect
+    const paired = new Set();
+    for (let round = 0; round < n; round++) {
+      let bestScore = -Infinity;
+      let bestI = -1, bestJ = -1;
+      
+      for (let i = 0; i < n; i++) {
+        if (paired.has(i)) continue;
+        for (let j = i + 1; j < n; j++) {
+          if (paired.has(j)) continue;
+          
+          // Combined score: both directions
+          const combinedScore = scores[i][j] + scores[j][i];
+          if (combinedScore > bestScore) {
+            bestScore = combinedScore;
+            bestI = i;
+            bestJ = j;
+          }
+        }
+      }
+      
+      if (bestI === -1 || bestScore <= 0) break;
+      
+      // Connect the pair
+      const nodeI = nodes[bestI];
+      const nodeJ = nodes[bestJ];
+      const distance = cosineDistance(nodeI.vector, nodeJ.vector);
+      
+      if (nodeI.neighborCount(layer) < maxConn) {
+        nodeI.addNeighbor(layer, nodeJ.id, distance);
+      }
+      if (nodeJ.neighborCount(layer) < maxConn) {
+        nodeJ.addNeighbor(layer, nodeI.id, distance);
+      }
+      
+      // Update scores (mark as connected)
+      scores[bestI][bestJ] = -Infinity;
+      scores[bestJ][bestI] = -Infinity;
+      
+      // Check if nodes are full
+      if (nodeI.neighborCount(layer) >= maxConn) paired.add(bestI);
+      if (nodeJ.neighborCount(layer) >= maxConn) paired.add(bestJ);
+    }
   }
 
   /**
@@ -441,7 +703,8 @@ class HNSW {
         vector: Array.from(node.vector),
         level: node.level,
         value: node.value,
-        layers: node.layers.map(layer => Array.from(layer))
+        // Serialize Map as array of [id, distance] pairs
+        layers: node.layers.map(layer => Array.from(layer.entries()))
       });
     }
 
@@ -475,8 +738,42 @@ class HNSW {
         nodeData.level,
         nodeData.value
       );
-      node.layers = nodeData.layers.map(layer => new Set(layer));
+      // Deserialize layers - handle both old Set format and new Map format
+      node.layers = nodeData.layers.map((layer, layerIdx) => {
+        const map = new Map();
+        for (const entry of layer) {
+          if (Array.isArray(entry) && entry.length === 2) {
+            // New format: [id, distance]
+            map.set(entry[0], entry[1]);
+          } else {
+            // Old format: just id (need to recompute distance later)
+            map.set(entry, 0);  // Distance will be recalculated
+          }
+        }
+        return map;
+      });
+      // Recompute worst neighbor caches
+      node.worstNeighbor = node.layers.map(() => ({ id: null, distance: -Infinity }));
+      for (let lc = 0; lc < node.layers.length; lc++) {
+        node.recomputeWorst(lc);
+      }
       hnsw.nodes.set(node.id, node);
+    }
+
+    // Recompute distances if needed (for old format compatibility)
+    for (const node of hnsw.nodes.values()) {
+      for (let lc = 0; lc < node.layers.length; lc++) {
+        for (const [neighborId, dist] of node.layers[lc]) {
+          if (dist === 0) {
+            const neighbor = hnsw.nodes.get(neighborId);
+            if (neighbor) {
+              const realDist = cosineDistance(node.vector, neighbor.vector);
+              node.layers[lc].set(neighborId, realDist);
+            }
+          }
+        }
+        node.recomputeWorst(lc);
+      }
     }
 
     // Set entry point
@@ -489,3 +786,4 @@ class HNSW {
 }
 
 export { HNSW, HNSWNode, cosineDistance, normalize };
+

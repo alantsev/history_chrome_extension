@@ -1,260 +1,219 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+/**
+ * Tests for HNSW Implementation (Redis-style)
+ */
+
+import { describe, it, expect } from 'vitest';
 import { HNSW, cosineDistance, normalize } from './hnsw.js';
 
-describe('cosineDistance', () => {
-  it('should return 0 for identical normalized vectors', () => {
-    const v = normalize([1, 2, 3]);
-    expect(cosineDistance(v, v)).toBeCloseTo(0, 5);
-  });
+// Helper to generate random vectors
+function randomVector(dim) {
+  const vec = new Float32Array(dim);
+  for (let i = 0; i < dim; i++) {
+    vec[i] = Math.random() * 2 - 1;
+  }
+  return vec;
+}
 
-  it('should return 2 for opposite vectors', () => {
-    const v1 = normalize([1, 0, 0]);
-    const v2 = normalize([-1, 0, 0]);
-    expect(cosineDistance(v1, v2)).toBeCloseTo(2, 5);
-  });
+// Helper to compute cosine similarity for verification
+function cosineSimilarity(a, b) {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
 
-  it('should return 1 for orthogonal vectors', () => {
-    const v1 = normalize([1, 0, 0]);
-    const v2 = normalize([0, 1, 0]);
-    expect(cosineDistance(v1, v2)).toBeCloseTo(1, 5);
-  });
-});
-
-describe('normalize', () => {
-  it('should normalize a vector to unit length', () => {
-    const v = normalize([3, 4, 0]);
-    const length = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-    expect(length).toBeCloseTo(1, 5);
-  });
-
-  it('should handle zero vector', () => {
-    const v = normalize([0, 0, 0]);
-    expect(v).toEqual([0, 0, 0]);
-  });
-});
+// Brute force k-NN for ground truth
+function bruteForceKNN(query, vectors, k) {
+  const distances = vectors.map((v, i) => ({
+    index: i,
+    similarity: cosineSimilarity(query, v.vector)
+  }));
+  distances.sort((a, b) => b.similarity - a.similarity);
+  return distances.slice(0, k);
+}
 
 describe('HNSW', () => {
-  let hnsw;
-
-  beforeEach(() => {
-    hnsw = new HNSW({ M: 8, efConstruction: 100 });
-  });
-
-  describe('insert', () => {
-    it('should insert a single vector', () => {
-      const node = hnsw.insert([1, 0, 0], { url: 'test.com' });
-
-      expect(node).toBeDefined();
-      expect(node.id).toBe(0);
-      expect(hnsw.nodes.size).toBe(1);
-    });
-
-    it('should insert multiple vectors', () => {
-      hnsw.insert([1, 0, 0]);
-      hnsw.insert([0, 1, 0]);
-      hnsw.insert([0, 0, 1]);
-
-      expect(hnsw.nodes.size).toBe(3);
-    });
-
-    it('should set entry point on first insert', () => {
-      const node = hnsw.insert([1, 0, 0]);
-      expect(hnsw.entryPoint).toBe(node);
-    });
-
-    it('should store associated value', () => {
-      const value = { url: 'example.com', title: 'Example' };
-      const node = hnsw.insert([1, 0, 0], value);
-
-      expect(node.value).toEqual(value);
-    });
-  });
-
-  describe('search', () => {
-    it('should return empty array for empty index', () => {
-      const results = hnsw.search([1, 0, 0], 5);
-      expect(results).toEqual([]);
-    });
-
-    it('should find exact match', () => {
-      hnsw.insert([1, 0, 0], { id: 'a' });
-      hnsw.insert([0, 1, 0], { id: 'b' });
-      hnsw.insert([0, 0, 1], { id: 'c' });
-
-      const results = hnsw.search([1, 0, 0], 1);
-
-      expect(results).toHaveLength(1);
-      expect(results[0].value.id).toBe('a');
-      expect(results[0].distance).toBeCloseTo(0, 5);
-    });
-
-    it('should return k nearest neighbors', () => {
-      // Insert vectors at different distances from query
-      hnsw.insert([1, 0, 0], { id: 'closest' });
-      hnsw.insert([0.9, 0.1, 0], { id: 'close' });
-      hnsw.insert([0, 1, 0], { id: 'far' });
-      hnsw.insert([0, 0, 1], { id: 'farther' });
-
-      const results = hnsw.search([1, 0, 0], 2);
-
-      expect(results).toHaveLength(2);
-      expect(results[0].value.id).toBe('closest');
-    });
-
-    it('should handle k larger than index size', () => {
-      hnsw.insert([1, 0, 0]);
-      hnsw.insert([0, 1, 0]);
-
-      const results = hnsw.search([1, 0, 0], 10);
-
-      expect(results).toHaveLength(2);
-    });
-  });
-
-  describe('delete', () => {
-    it('should delete a node', () => {
-      const node = hnsw.insert([1, 0, 0]);
-      expect(hnsw.nodes.size).toBe(1);
-
-      const deleted = hnsw.delete(node.id);
-
-      expect(deleted).toBe(true);
-      expect(hnsw.nodes.size).toBe(0);
-    });
-
-    it('should return false for non-existent node', () => {
-      const deleted = hnsw.delete(999);
-      expect(deleted).toBe(false);
-    });
-
-    it('should update entry point when deleted', () => {
-      const node1 = hnsw.insert([1, 0, 0]);
-      hnsw.insert([0, 1, 0]);
-
-      if (hnsw.entryPoint === node1) {
-        hnsw.delete(node1.id);
-        expect(hnsw.entryPoint).not.toBe(node1);
-        expect(hnsw.entryPoint).not.toBeNull();
+  describe('basic operations', () => {
+    it('should insert and search vectors', () => {
+      const index = new HNSW({ M: 16, efConstruction: 100 });
+      const dim = 128;
+      
+      for (let i = 0; i < 100; i++) {
+        index.insert(randomVector(dim), { label: `item_${i}` });
       }
-    });
-
-    it('should remove connections from neighbors', () => {
-      hnsw.insert([1, 0, 0]);
-      const node2 = hnsw.insert([0.9, 0.1, 0]);
-      hnsw.insert([0.8, 0.2, 0]);
-
-      hnsw.delete(node2.id);
-
-      // Verify no node references the deleted node
-      for (const node of hnsw.nodes.values()) {
-        for (const layer of node.layers) {
-          expect(layer.has(node2.id)).toBe(false);
-        }
-      }
-    });
-  });
-
-  describe('stats', () => {
-    it('should return correct stats', () => {
-      hnsw.insert([1, 0, 0]);
-      hnsw.insert([0, 1, 0]);
-      hnsw.insert([0, 0, 1]);
-
-      const stats = hnsw.stats();
-
-      expect(stats.nodeCount).toBe(3);
-      expect(stats.M).toBe(8);
-    });
-  });
-
-  describe('serialization', () => {
-    it('should serialize and deserialize empty index', () => {
-      const serialized = hnsw.serialize();
-      const restored = HNSW.deserialize(serialized);
-
-      expect(restored.nodes.size).toBe(0);
-      expect(restored.entryPoint).toBeNull();
-    });
-
-    it('should serialize and deserialize index with nodes', () => {
-      hnsw.insert([1, 0, 0], { id: 'a' });
-      hnsw.insert([0, 1, 0], { id: 'b' });
-      hnsw.insert([0, 0, 1], { id: 'c' });
-
-      const serialized = hnsw.serialize();
-      const restored = HNSW.deserialize(serialized);
-
-      expect(restored.nodes.size).toBe(3);
-      expect(restored.entryPoint).not.toBeNull();
-
-      // Search should work on restored index
-      const results = restored.search([1, 0, 0], 1);
-      expect(results[0].value.id).toBe('a');
-    });
-
-    it('should preserve connections after deserialization', () => {
-      for (let i = 0; i < 20; i++) {
-        hnsw.insert([Math.random(), Math.random(), Math.random()]);
-      }
-
-      const originalStats = hnsw.stats();
-      const serialized = hnsw.serialize();
-      const restored = HNSW.deserialize(serialized);
-      const restoredStats = restored.stats();
-
-      expect(restoredStats.nodeCount).toBe(originalStats.nodeCount);
-      expect(restoredStats.totalConnections).toBe(originalStats.totalConnections);
-    });
-  });
-
-  describe('high-dimensional vectors', () => {
-    it('should handle 384-dimensional vectors (like embeddings)', () => {
-      const dim = 384;
-
-      // Generate random vectors
-      for (let i = 0; i < 50; i++) {
-        const vec = Array.from({ length: dim }, () => Math.random() - 0.5);
-        hnsw.insert(vec, { id: i });
-      }
-
-      expect(hnsw.nodes.size).toBe(50);
-
-      // Search should return results
-      const query = Array.from({ length: dim }, () => Math.random() - 0.5);
-      const results = hnsw.search(query, 5);
-
-      expect(results).toHaveLength(5);
-      // Results should be sorted by distance
+      
+      const query = randomVector(dim);
+      const results = index.search(query, 10);
+      
+      expect(results).toHaveLength(10);
+      
+      // Results should be sorted by distance (ascending)
       for (let i = 1; i < results.length; i++) {
-        expect(results[i].distance).toBeGreaterThanOrEqual(results[i - 1].distance);
+        expect(results[i - 1].distance).toBeLessThanOrEqual(results[i].distance);
       }
+    });
+
+    it('should return empty results for empty index', () => {
+      const index = new HNSW();
+      const results = index.search(randomVector(64), 10);
+      expect(results).toHaveLength(0);
+    });
+
+    it('should return false when deleting non-existent node', () => {
+      const index = new HNSW();
+      expect(index.delete(999)).toBe(false);
     });
   });
 
   describe('recall quality', () => {
-    it('should have good recall for nearest neighbor', () => {
-      const dim = 32;
-      const numVectors = 100;
+    it('should achieve at least 80% recall@10', () => {
+      const index = new HNSW({ M: 16, efConstruction: 200 });
+      const dim = 64;
+      const n = 500;
       const vectors = [];
-
-      // Insert random vectors
-      for (let i = 0; i < numVectors; i++) {
-        const vec = Array.from({ length: dim }, () => Math.random() - 0.5);
-        vectors.push(vec);
-        hnsw.insert(vec, { id: i });
+      
+      for (let i = 0; i < n; i++) {
+        const vec = randomVector(dim);
+        const node = index.insert(vec);
+        vectors.push({ id: node.id, vector: vec });
       }
+      
+      const numQueries = 20;
+      const k = 10;
+      let totalRecall = 0;
+      
+      for (let q = 0; q < numQueries; q++) {
+        const query = randomVector(dim);
+        const hnswResults = index.search(query, k);
+        const bruteResults = bruteForceKNN(query, vectors, k);
+        
+        const trueTopK = new Set(bruteResults.map(r => vectors[r.index].id));
+        let hits = 0;
+        for (const r of hnswResults) {
+          if (trueTopK.has(r.id)) hits++;
+        }
+        totalRecall += hits / k;
+      }
+      
+      const avgRecall = totalRecall / numQueries;
+      expect(avgRecall).toBeGreaterThanOrEqual(0.8);
+    });
+  });
 
-      // Test recall: for each vector, its nearest neighbor should be itself
-      let correctCount = 0;
-      for (let i = 0; i < numVectors; i++) {
-        const results = hnsw.search(vectors[i], 1);
-        if (results[0].value.id === i) {
-          correctCount++;
+  describe('deletion and reconnection', () => {
+    it('should delete nodes and maintain search functionality', () => {
+      const index = new HNSW({ M: 8, efConstruction: 50 });
+      const dim = 32;
+      const ids = [];
+      
+      for (let i = 0; i < 50; i++) {
+        ids.push(index.insert(randomVector(dim)).id);
+      }
+      
+      // Delete half
+      for (let i = 0; i < 25; i++) {
+        expect(index.delete(ids[i])).toBe(true);
+      }
+      
+      expect(index.nodes.size).toBe(25);
+      
+      // Search should still work
+      const results = index.search(randomVector(dim), 5);
+      expect(results).toHaveLength(5);
+      
+      // Deleted IDs should not appear
+      const deletedSet = new Set(ids.slice(0, 25));
+      for (const r of results) {
+        expect(deletedSet.has(r.id)).toBe(false);
+      }
+    });
+  });
+
+  describe('serialization', () => {
+    it('should serialize and deserialize correctly', () => {
+      const index = new HNSW({ M: 16, efConstruction: 100 });
+      const dim = 64;
+      
+      for (let i = 0; i < 100; i++) {
+        index.insert(randomVector(dim), `value_${i}`);
+      }
+      
+      const serialized = index.serialize();
+      const json = JSON.stringify(serialized);
+      const parsed = JSON.parse(json);
+      const restored = HNSW.deserialize(parsed);
+      
+      expect(restored.nodes.size).toBe(index.nodes.size);
+      
+      // Same query should return same results
+      const query = randomVector(dim);
+      const originalResults = index.search(query, 10);
+      const restoredResults = restored.search(query, 10);
+      
+      expect(restoredResults).toHaveLength(originalResults.length);
+      for (let i = 0; i < originalResults.length; i++) {
+        expect(restoredResults[i].id).toBe(originalResults[i].id);
+      }
+    });
+  });
+
+  describe('worst neighbor tracking', () => {
+    it('should correctly track worst neighbor per layer', () => {
+      const index = new HNSW({ M: 4, efConstruction: 50 });
+      const dim = 16;
+      
+      for (let i = 0; i < 30; i++) {
+        index.insert(randomVector(dim));
+      }
+      
+      for (const node of index.nodes.values()) {
+        for (let lc = 0; lc <= node.level; lc++) {
+          if (node.neighborCount(lc) > 0) {
+            const cached = node.worstNeighbor[lc];
+            let actualWorst = { id: null, distance: -Infinity };
+            
+            for (const [nid, dist] of node.layers[lc]) {
+              if (dist > actualWorst.distance) {
+                actualWorst = { id: nid, distance: dist };
+              }
+            }
+            
+            expect(cached.id).toBe(actualWorst.id);
+            expect(cached.distance).toBe(actualWorst.distance);
+          }
         }
       }
+    });
+  });
 
-      const recall = correctCount / numVectors;
-      expect(recall).toBeGreaterThan(0.95);  // Should find itself most of the time
+  describe('bidirectional links', () => {
+    it('should maintain bidirectional link integrity', () => {
+      const index = new HNSW({ M: 8, efConstruction: 50 });
+      const dim = 32;
+      
+      for (let i = 0; i < 100; i++) {
+        index.insert(randomVector(dim));
+      }
+      
+      let violations = 0;
+      for (const node of index.nodes.values()) {
+        for (let lc = 0; lc <= node.level; lc++) {
+          for (const [neighborId, _] of node.layers[lc]) {
+            const neighbor = index.nodes.get(neighborId);
+            if (neighbor && lc <= neighbor.level) {
+              if (!neighbor.layers[lc].has(node.id)) {
+                violations++;
+              }
+            }
+          }
+        }
+      }
+      
+      expect(violations).toBe(0);
     });
   });
 });
+

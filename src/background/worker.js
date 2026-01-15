@@ -128,19 +128,28 @@ class BackgroundWorker {
   async handlePageVisited(pageData) {
     const embeddings = await BackgroundWorker.embeddingsGenerator.generateEmbeddings(pageData.markdown);
 
+    // Check if page already exists and has an HNSW node - delete it first
+    const existingPage = await this.db.getPageByUrl(pageData.url);
+    if (existingPage && existingPage.hnswNodeId !== undefined && this.hnsw) {
+      this.hnsw.delete(existingPage.hnswNodeId);
+    }
+
+    // Add to HNSW index
+    let hnswNodeId = undefined;
+    if (this.hnsw) {
+      const node = this.hnsw.insert(embeddings, { url: pageData.url, title: pageData.title });
+      hnswNodeId = node.id;
+      this.hnswDirty = true;
+    }
+
     const db_data = {
       url: pageData.url,
       title: pageData.title,
       timestamp: pageData.timestamp,
-      embeddings: embeddings
+      embeddings: embeddings,
+      hnswNodeId: hnswNodeId
     };
     await this.db.savePage(db_data);
-
-    // Add to HNSW index
-    if (this.hnsw) {
-      this.hnsw.insert(embeddings, { url: pageData.url, title: pageData.title });
-      this.hnswDirty = true;
-    }
   }
 
   async handleSearch(data) {
@@ -212,5 +221,4 @@ class BackgroundWorker {
 
 // Initialize the worker
 new BackgroundWorker();
-
 
