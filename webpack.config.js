@@ -37,6 +37,10 @@ const config = {
                     from: "./src/content/content.js",
                     to: "./content/content.js"
                 },
+                {
+                    from: "./node_modules/@xenova/transformers/dist/*.wasm",
+                    to: "./lib/[name][ext]"
+                },
             ],
         })
     ],

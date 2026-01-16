@@ -12,7 +12,7 @@ class EmbeddingsGenerator {
     env.useBrowserCache = false;
     env.allowRemoteModels = false;
     env.localModelPath = chrome.runtime.getURL('models/');
-    //env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('lib/');
+    env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('lib/');
     env.backends.onnx.wasm.numThreads = 1;
   }
 
